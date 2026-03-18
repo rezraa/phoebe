@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Environments
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Database / Tome files
+*.kuzu/
+*.tome
+
+# MCP config (contains local paths)
+.mcp.json
+
+# Plan (private)
+PLAN.md
+
+# OS
+.DS_Store
+
+# Benchmark results (regeneratable)
+tests/benchmarks/results/*.json
