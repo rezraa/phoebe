@@ -19,6 +19,11 @@ from phoebe.tools.brief import brief as _brief
 from phoebe.tools.blast_radius import blast_radius as _blast_radius
 from phoebe.tools.who_knows import who_knows as _who_knows
 from phoebe.tools.stats import stats as _stats
+from phoebe.tools.create_plan import create_plan as _create_plan
+from phoebe.tools.add_epic import add_epic as _add_epic
+from phoebe.tools.add_story import add_story as _add_story
+from phoebe.tools.update_story import update_story as _update_story
+from phoebe.tools.get_plan import get_plan as _get_plan
 from phoebe.tools._shared import coerce
 
 
@@ -187,6 +192,184 @@ def stats() -> dict:
     Returns: {memories, sources, entities, milestones, stale_sources}
     """
     return _stats()
+
+
+# ---------------------------------------------------------------------------
+# Execution pipeline tools — plans, epics, stories
+# Prometheus designs. Phoebe writes. Titans execute.
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def create_plan(
+    name: str,
+    goal: str,
+    epics: Union[list[dict], str] = "[]",
+    conn: Any = None,
+) -> dict:
+    """Create a full execution plan with epics and stories.
+
+    Prometheus designs the plan via council, then calls this to write it
+    to Othrys. Creates plan, epic, and story nodes plus all relationships.
+
+    Args:
+        name: Plan name (e.g. "Build Theia Titan").
+        goal: What the plan achieves.
+        epics: List of epic dicts, each with name, description, sequence,
+               acceptance_criteria, and a stories list. Each story has
+               name, description, phase, assigned_titan, sequence,
+               acceptance_criteria, and optional depends_on (list of
+               story names).
+        conn: Kuzu connection (injected by Othrys).
+
+    Returns: {created, plan_id, epic_ids, story_ids, edge_counts}
+    """
+    return _create_plan(
+        name=name,
+        goal=goal,
+        epics=coerce(epics, list),
+        conn=conn,
+    )
+
+
+@mcp.tool()
+def add_epic(
+    plan_id: str,
+    name: str,
+    description: str,
+    sequence: int,
+    acceptance_criteria: str = "",
+    stories: Union[list[dict], str, None] = None,
+    conn: Any = None,
+) -> dict:
+    """Add an epic to an existing plan.
+
+    Used when Prometheus adds scope mid-execution — new epics that
+    weren't in the original plan.
+
+    Args:
+        plan_id: ID of the existing plan.
+        name: Epic name.
+        description: What this epic achieves.
+        sequence: Order within the plan.
+        acceptance_criteria: How we know it's done.
+        stories: Optional list of story dicts (same format as create_plan).
+        conn: Kuzu connection (injected by Othrys).
+
+    Returns: {added, epic_id, story_ids}
+    """
+    return _add_epic(
+        plan_id=plan_id,
+        name=name,
+        description=description,
+        sequence=sequence,
+        acceptance_criteria=acceptance_criteria,
+        stories=coerce(stories, list),
+        conn=conn,
+    )
+
+
+@mcp.tool()
+def add_story(
+    epic_id: str,
+    name: str,
+    description: str,
+    phase: str,
+    assigned_titan: str,
+    sequence: int,
+    acceptance_criteria: str = "",
+    depends_on_ids: Union[list[str], str, None] = None,
+    conn: Any = None,
+) -> dict:
+    """Add a story to an existing epic.
+
+    Used for fix stories from adversarial review, or when Prometheus
+    discovers new work mid-execution.
+
+    Args:
+        epic_id: ID of the existing epic.
+        name: Story name.
+        description: What needs to happen.
+        phase: context|architecture|design|implementation|testing|security|review.
+        assigned_titan: Which Titan executes this (e.g. "mnemos").
+        sequence: Order within the epic.
+        acceptance_criteria: Definition of done.
+        depends_on_ids: Optional list of story IDs this depends on.
+        conn: Kuzu connection (injected by Othrys).
+
+    Returns: {added, story_id}
+    """
+    return _add_story(
+        epic_id=epic_id,
+        name=name,
+        description=description,
+        phase=phase,
+        assigned_titan=assigned_titan,
+        sequence=sequence,
+        acceptance_criteria=acceptance_criteria,
+        depends_on_ids=coerce(depends_on_ids, list),
+        conn=conn,
+    )
+
+
+@mcp.tool()
+def update_story(
+    story_id: str,
+    status: str | None = None,
+    phase: str | None = None,
+    output: Union[dict, str, None] = None,
+    input_context: Union[dict, str, None] = None,
+    store_as_memory: bool = False,
+    memory_project: str = "",
+    conn: Any = None,
+) -> dict:
+    """Update a story's status, phase, output, or input_context.
+
+    The workhorse tool — called every time a story changes state.
+    Prometheus calls this to mark stories in_progress, completed, etc.
+
+    Args:
+        story_id: ID of the story to update.
+        status: New status: pending|in_progress|completed|blocked|failed.
+        phase: New phase: context|architecture|design|implementation|
+               testing|security|review|done.
+        output: Titan's output for this story (dict or JSON string).
+        input_context: Context passed to the Titan (dict or JSON string).
+        store_as_memory: If True, create a memory node linked via produces.
+        memory_project: Project name for the memory node.
+        conn: Kuzu connection (injected by Othrys).
+
+    Returns: {updated, story_id, fields_updated, memory_id}
+    """
+    return _update_story(
+        story_id=story_id,
+        status=status,
+        phase=phase,
+        output=coerce(output, dict),
+        input_context=coerce(input_context, dict),
+        store_as_memory=store_as_memory,
+        memory_project=memory_project,
+        conn=conn,
+    )
+
+
+@mcp.tool()
+def get_plan(
+    plan_id: str | None = None,
+    conn: Any = None,
+) -> dict:
+    """Read a full execution plan with all epics and stories.
+
+    If plan_id is None, returns the most recently created plan.
+    The LLM uses this to figure out what's next, what's done,
+    and what outputs are available as input_context.
+
+    Args:
+        plan_id: ID of the plan. None = latest plan.
+        conn: Kuzu connection (injected by Othrys).
+
+    Returns: {plan, epics: [{..., stories: [...]}], summary}
+    """
+    return _get_plan(plan_id=plan_id, conn=conn)
 
 
 # ---------------------------------------------------------------------------

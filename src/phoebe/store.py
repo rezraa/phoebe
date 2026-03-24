@@ -289,3 +289,124 @@ class GraphStore:
     def link_source_contains(self, parent_id: str, child_id: str) -> None:
         """contains: source contains another source (hierarchy)."""
         self._create_edge("contains", "sources", parent_id, "sources", child_id)
+
+    # ------------------------------------------------------------------
+    # Plan CRUD
+    # ------------------------------------------------------------------
+
+    def add_plan(self, plan: dict[str, Any]) -> str:
+        """Insert a plan node. Returns the plan id."""
+        return self._insert_node("plans", plan)
+
+    def get_plan(self, plan_id: str) -> dict[str, Any] | None:
+        """Get a single plan by id."""
+        rows = self._execute(
+            "MATCH (p:plans) WHERE p.id = $id RETURN p",
+            {"id": plan_id},
+        )
+        return rows[0][0] if rows else None
+
+    def get_latest_plan(self) -> dict[str, Any] | None:
+        """Get the most recently created plan."""
+        rows = self._execute(
+            "MATCH (p:plans) RETURN p ORDER BY p.created_at DESC LIMIT 1"
+        )
+        return rows[0][0] if rows else None
+
+    def update_plan(self, plan_id: str, **fields: Any) -> None:
+        """Update plan fields."""
+        from phoebe.models import _now
+        fields["updated_at"] = _now()
+        assignments = ", ".join(f"p.{k} = ${k}" for k in fields)
+        self._conn.execute(
+            f"MATCH (p:plans) WHERE p.id = $id SET {assignments}",
+            parameters={"id": plan_id, **fields},
+        )
+
+    # ------------------------------------------------------------------
+    # Epic CRUD
+    # ------------------------------------------------------------------
+
+    def add_epic(self, epic: dict[str, Any]) -> str:
+        """Insert an epic node. Returns the epic id."""
+        return self._insert_node("epics", epic)
+
+    def get_epics_for_plan(self, plan_id: str) -> list[dict]:
+        """Get all epics for a plan, ordered by sequence."""
+        rows = self._execute(
+            "MATCH (e:epics) WHERE e.plan_id = $plan_id "
+            "RETURN e ORDER BY e.sequence",
+            {"plan_id": plan_id},
+        )
+        return [r[0] for r in rows]
+
+    def update_epic(self, epic_id: str, **fields: Any) -> None:
+        """Update epic fields."""
+        assignments = ", ".join(f"e.{k} = ${k}" for k in fields)
+        self._conn.execute(
+            f"MATCH (e:epics) WHERE e.id = $id SET {assignments}",
+            parameters={"id": epic_id, **fields},
+        )
+
+    # ------------------------------------------------------------------
+    # Story CRUD
+    # ------------------------------------------------------------------
+
+    def add_story(self, story: dict[str, Any]) -> str:
+        """Insert a story node. Returns the story id."""
+        return self._insert_node("stories", story)
+
+    def get_stories_for_epic(self, epic_id: str) -> list[dict]:
+        """Get all stories for an epic, ordered by sequence."""
+        rows = self._execute(
+            "MATCH (s:stories) WHERE s.epic_id = $epic_id "
+            "RETURN s ORDER BY s.sequence",
+            {"epic_id": epic_id},
+        )
+        return [r[0] for r in rows]
+
+    def update_story(self, story_id: str, **fields: Any) -> None:
+        """Update story fields."""
+        from phoebe.models import _now
+        fields["updated_at"] = _now()
+        assignments = ", ".join(f"s.{k} = ${k}" for k in fields)
+        self._conn.execute(
+            f"MATCH (s:stories) WHERE s.id = $id SET {assignments}",
+            parameters={"id": story_id, **fields},
+        )
+
+    def get_story(self, story_id: str) -> dict[str, Any] | None:
+        """Get a single story by id."""
+        rows = self._execute(
+            "MATCH (s:stories) WHERE s.id = $id RETURN s",
+            {"id": story_id},
+        )
+        return rows[0][0] if rows else None
+
+    # ------------------------------------------------------------------
+    # Plan edge creation
+    # ------------------------------------------------------------------
+
+    def link_plan_to_epic(self, plan_id: str, epic_id: str, sequence: int) -> None:
+        """has_epic: plan contains epic."""
+        self._create_edge("has_epic", "plans", plan_id, "epics", epic_id, {"sequence": sequence})
+
+    def link_epic_to_story(self, epic_id: str, story_id: str, sequence: int) -> None:
+        """has_story: epic contains story."""
+        self._create_edge("has_story", "epics", epic_id, "stories", story_id, {"sequence": sequence})
+
+    def link_story_to_agent(self, story_id: str, agent_id: str) -> None:
+        """assigned_to: story is assigned to a Titan."""
+        self._create_edge("assigned_to", "stories", story_id, "agents", agent_id)
+
+    def link_story_depends_on(self, story_id: str, dependency_id: str, reason: str = "") -> None:
+        """story_depends_on: story depends on another story."""
+        self._create_edge("story_depends_on", "stories", story_id, "stories", dependency_id, {"reason": reason})
+
+    def link_story_produces(self, story_id: str, memory_id: str) -> None:
+        """produces: story produced this memory as an artifact."""
+        self._create_edge("produces", "stories", story_id, "memories", memory_id)
+
+    def link_plan_to_milestone(self, plan_id: str, milestone_id: str) -> None:
+        """plan_milestone: plan targets a milestone."""
+        self._create_edge("plan_milestone", "plans", plan_id, "milestones", milestone_id)
