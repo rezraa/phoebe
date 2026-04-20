@@ -50,7 +50,9 @@ def update_story(
     fields_updated: list[str] = []
 
     if status is not None:
-        fields["status"] = status
+        # Normalize common aliases so the GUI always sees canonical values
+        _STATUS_ALIASES = {"done": "completed"}
+        fields["status"] = _STATUS_ALIASES.get(status, status)
         fields_updated.append("status")
     if phase is not None:
         fields["phase"] = phase
