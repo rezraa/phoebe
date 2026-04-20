@@ -46,7 +46,7 @@ def remember(
 
     # Dedup: check if a memory with the same content already exists
     import json
-    content_json = json.dumps({"description": content})
+    content_json = "JSON:" + json.dumps({"description": content})
     existing = store.query_memories(project=project or None, limit=50)
     for ex in existing:
         if ex.get("content") == content_json:

@@ -56,10 +56,10 @@ def update_story(
         fields["phase"] = phase
         fields_updated.append("phase")
     if output is not None:
-        fields["output"] = json.dumps(output) if isinstance(output, dict) else output
+        fields["output"] = "JSON:" + json.dumps(output) if isinstance(output, dict) else output
         fields_updated.append("output")
     if input_context is not None:
-        fields["input_context"] = json.dumps(input_context) if isinstance(input_context, dict) else input_context
+        fields["input_context"] = "JSON:" + json.dumps(input_context) if isinstance(input_context, dict) else input_context
         fields_updated.append("input_context")
 
     if fields:

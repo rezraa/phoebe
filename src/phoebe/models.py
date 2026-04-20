@@ -45,7 +45,7 @@ def make_memory(
     import json
     return {
         "id": id or _id("m"),
-        "content": json.dumps(content) if isinstance(content, dict) else content,
+        "content": "JSON:" + json.dumps(content) if isinstance(content, dict) else content,
         "memory_type": memory_type,
         "status": status,
         "outcome": outcome or "unknown",
@@ -86,7 +86,7 @@ def make_source(
         "last_verified": _now(),
         "stale": False,
         "extraction_model": extraction_model,
-        "data": json.dumps(data) if data else "{}",
+        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
     }
 
 
@@ -113,7 +113,7 @@ def make_entity(
         "id": id or _id("e"),
         "name": name,
         "entity_type": entity_type,
-        "data": json.dumps(data) if data else "{}",
+        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
     }
 
 
@@ -145,7 +145,7 @@ def make_milestone(
         "start_date": start_date or _now(),
         "end_date": end_date,
         "status": status,
-        "data": json.dumps(data) if data else "{}",
+        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
     }
 
 
@@ -185,7 +185,7 @@ def make_plan(
         "created_by": created_by,
         "created_at": now,
         "updated_at": now,
-        "data": json.dumps(data) if data else "{}",
+        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
     }
 
 
@@ -210,7 +210,7 @@ def make_epic(
         "sequence": sequence,
         "status": status,
         "acceptance_criteria": acceptance_criteria,
-        "data": json.dumps(data) if data else "{}",
+        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
     }
 
 
@@ -241,10 +241,10 @@ def make_story(
         "assigned_titan": assigned_titan,
         "sequence": sequence,
         "status": status,
-        "input_context": json.dumps(input_context) if input_context else "{}",
-        "output": json.dumps(output) if output else "{}",
+        "input_context": "JSON:" + json.dumps(input_context) if input_context else "JSON:{}",
+        "output": "JSON:" + json.dumps(output) if output else "JSON:{}",
         "acceptance_criteria": acceptance_criteria,
         "created_at": now,
         "updated_at": now,
-        "data": json.dumps(data) if data else "{}",
+        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
     }

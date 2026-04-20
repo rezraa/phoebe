@@ -72,7 +72,16 @@ def investigate(
     for row in existing:
         mem = row[0]
         try:
-            content = json.loads(mem["content"]) if isinstance(mem["content"], str) else mem["content"]
+            raw = mem["content"]
+            if isinstance(raw, str):
+                if raw.startswith("JSON:"):
+                    content = json.loads(raw[5:])
+                else:
+                    # Post-v3 invariant: STRING memory content must be
+                    # tagged. Reject bare/whitespace-prefix forms.
+                    raise json.JSONDecodeError("untagged", raw, 0)
+            else:
+                content = raw
             existing_claims.append({
                 "id": mem["id"],
                 "content": content,

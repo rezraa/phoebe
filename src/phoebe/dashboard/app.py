@@ -53,8 +53,17 @@ def get_full_graph(store: GraphStore) -> dict:
         m = row[0]
         content = m.get("content", "{}")
         try:
-            desc = json.loads(content).get("description", content[:80]) if isinstance(content, str) else str(content)[:80]
-        except (json.JSONDecodeError, TypeError):
+            if isinstance(content, str):
+                if content.startswith("JSON:"):
+                    desc = json.loads(content[5:]).get("description", content[5:85])
+                else:
+                    # Post-v3 invariant: tagged-JSON only. Untagged
+                    # strings render as their raw prefix without a
+                    # bogus json.loads crash.
+                    desc = content[:80]
+            else:
+                desc = str(content)[:80]
+        except (json.JSONDecodeError, TypeError, AttributeError):
             desc = str(content)[:80]
 
         color = "#ef4444" if m.get("status") == "superseded" else "#3b82f6"
