@@ -23,6 +23,7 @@ def _id(prefix: str = "m") -> str:
 MEMORY_TYPES = {
     "decision", "context", "observation", "requirement", "risk",
     "lesson", "incident", "change", "assumption", "question",
+    "code_change",  # D2: structural delta from code sync
 }
 
 MEMORY_STATUSES = {"open", "resolved", "deferred", "abandoned", "superseded"}

@@ -88,6 +88,14 @@ def update_story(
         memory_id = store.add_memory(mem)
         store.link_story_produces(story_id, memory_id)
 
+    # D3: Invalidate brief cache on story completion
+    if fields.get("status") == "completed":
+        try:
+            from phoebe.reasoning import invalidate_brief_cache
+            invalidate_brief_cache(memory_project or None)
+        except Exception:
+            pass  # cache invalidation is best-effort
+
     return {
         "updated": True,
         "story_id": story_id,

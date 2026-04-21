@@ -3,12 +3,356 @@
 
 These are the tools that make Phoebe more than CRUD. She walks edges,
 traces causality, detects patterns, and surfaces insights.
+
+Includes code_context section in brief() for file-referencing topics,
+structural delta detection after sync (persisted as code_change memories),
+and per-project LRU brief cache with smart invalidation.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import re
+import time
+from collections import OrderedDict
 from typing import Any
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# File-reference detection for code_context in brief()
+# ---------------------------------------------------------------------------
+
+# Matches file-like references: foo/bar.py, src/module.ts, etc.
+_FILE_REF_RE = re.compile(
+    r'(?:^|[\s,;(])('
+    r'(?:[\w./-]+/)?'        # optional directory path
+    r'[\w.-]+'               # filename stem
+    r'\.(?:py|ts|tsx|js|jsx|rs|swift|kt|go|java|rb|c|cpp|h|hpp)'  # extension
+    r')(?:[\s,;):]|$)',
+)
+
+# Matches dotted module names like othrys.code_topology._query
+_MODULE_REF_RE = re.compile(
+    r'(?:^|[\s,;(])'
+    r'((?:[a-zA-Z_]\w*\.){2,}[a-zA-Z_]\w*)'  # at least 3 dotted parts
+    r'(?:[\s,;):]|$)',
+)
+
+
+def _detect_file_references(topic: str) -> list[str]:
+    """Extract file paths and module references from a topic string.
+
+    Returns a list of file-path-like strings found in the topic.
+    Module references (dotted names) are converted to path form.
+    """
+    refs: list[str] = []
+
+    # Direct file paths
+    for m in _FILE_REF_RE.finditer(topic):
+        refs.append(m.group(1))
+
+    # Dotted module names -> path form
+    for m in _MODULE_REF_RE.finditer(topic):
+        mod = m.group(1)
+        # Convert dots to slashes and add .py extension
+        path = mod.replace(".", "/") + ".py"
+        refs.append(path)
+
+    return refs
+
+
+def _code_context_section(topic: str, conn: Any) -> str:
+    """Build a code_context section for brief() when topic references files.
+
+    Calls code_context() for dependencies and changes on the first
+    detected file reference.  Returns a formatted string under 2KB,
+    or empty string if no file reference found or code_topology unavailable.
+    """
+    refs = _detect_file_references(topic)
+    if not refs:
+        return ""
+
+    try:
+        from othrys.code_topology._query import code_context
+    except ImportError:
+        # Not running in Othrys mode -- code_topology not available
+        return ""
+
+    file_ref = refs[0]
+    sections: list[str] = []
+
+    try:
+        # Dependencies -- what does this file import/call?
+        deps = code_context(
+            file_ref, "dependencies", ".", conn,
+        )
+        if deps.get("symbols"):
+            sym_names = [s["name"] for s in deps["symbols"][:15]]
+            sections.append(f"Symbols: {', '.join(sym_names)}")
+        if deps.get("calls"):
+            call_strs = [
+                f"{c['from_symbol']}->{c['to_symbol']}({c.get('to_file', '?')})"
+                for c in deps["calls"][:10]
+            ]
+            sections.append(f"Calls: {', '.join(call_strs)}")
+        if deps.get("imports"):
+            imp_strs = [
+                f"{i['to_symbol']}({i.get('to_file', i.get('source_module', '?'))})"
+                for i in deps["imports"][:10]
+            ]
+            sections.append(f"Imports: {', '.join(imp_strs)}")
+
+        # Changes -- what symbols changed since last sync?
+        changes = code_context(
+            file_ref, "changes", ".", conn,
+        )
+        if changes.get("changed_files"):
+            for cf in changes["changed_files"][:5]:
+                status = cf.get("status", "unknown")
+                old_syms = [s["name"] for s in cf.get("symbols_before", [])[:10]]
+                sections.append(
+                    f"Changed ({status}): {cf['file']} "
+                    f"[was: {', '.join(old_syms) or 'none'}]"
+                )
+    except Exception as exc:
+        log.debug("_code_context_section failed for %r: %s", file_ref, exc)
+        return ""
+
+    if not sections:
+        return ""
+
+    # Truncate to under 2KB
+    result = f"Code context for {file_ref}:\n" + "\n".join(sections)
+    if len(result) > 2000:
+        result = result[:1997] + "..."
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Structural delta detection
+# ---------------------------------------------------------------------------
+
+def _detect_structural_delta(
+    old_symbols: list[dict],
+    new_symbols: list[dict],
+) -> list[dict]:
+    """Compare old and new symbol lists; return meaningful structural changes.
+
+    Each returned dict has keys: action (added/deleted/changed), name, kind,
+    and optionally old_signature/new_signature.
+
+    Trivial changes (whitespace/comment-only, same signature and kind) are
+    excluded.
+    """
+    old_by_name: dict[str, dict] = {}
+    for s in old_symbols:
+        key = s.get("name", "")
+        if key:
+            old_by_name[key] = s
+
+    new_by_name: dict[str, dict] = {}
+    for s in new_symbols:
+        key = s.get("name", "")
+        if key:
+            new_by_name[key] = s
+
+    old_names = set(old_by_name.keys())
+    new_names = set(new_by_name.keys())
+
+    deltas: list[dict] = []
+
+    # Deleted symbols
+    for name in sorted(old_names - new_names):
+        deltas.append({
+            "action": "deleted",
+            "name": name,
+            "kind": old_by_name[name].get("kind", "unknown"),
+        })
+
+    # Added symbols
+    for name in sorted(new_names - old_names):
+        deltas.append({
+            "action": "added",
+            "name": name,
+            "kind": new_by_name[name].get("kind", "unknown"),
+        })
+
+    # Changed symbols (same name, different signature or kind)
+    for name in sorted(old_names & new_names):
+        old_s = old_by_name[name]
+        new_s = new_by_name[name]
+
+        # Compare kind and signature -- ignore line numbers (trivial)
+        old_kind = old_s.get("kind", "")
+        new_kind = new_s.get("kind", "")
+
+        old_sig = (old_s.get("signature") or "").strip()
+        new_sig = (new_s.get("signature") or "").strip()
+
+        old_doc = (old_s.get("doc_string") or "").strip()
+        new_doc = (new_s.get("doc_string") or "").strip()
+
+        # Skip if only doc_string changed (comment-only change)
+        if old_kind == new_kind and old_sig == new_sig:
+            continue
+
+        deltas.append({
+            "action": "changed",
+            "name": name,
+            "kind": new_kind,
+            "old_signature": old_sig,
+            "new_signature": new_sig,
+        })
+
+    return deltas
+
+
+def persist_structural_delta(
+    deltas: list[dict],
+    file_path: str,
+    project: str,
+    store: Any,
+) -> list[str]:
+    """Persist structural deltas as code_change memories in the tome.
+
+    Args:
+        deltas: Output from _detect_structural_delta().
+        file_path: Relative file path that changed.
+        project: Project name for the memories.
+        store: A GraphStore instance for writing.
+
+    Returns:
+        List of memory IDs created.
+    """
+    if not deltas:
+        return []
+
+    from phoebe.models import make_memory
+
+    memory_ids: list[str] = []
+    for delta in deltas:
+        action = delta["action"]
+        name = delta["name"]
+        kind = delta.get("kind", "symbol")
+
+        if action == "added":
+            content_str = f"New {kind} '{name}' added to {file_path}"
+        elif action == "deleted":
+            content_str = f"{kind.title()} '{name}' deleted from {file_path}"
+        else:
+            old_sig = delta.get("old_signature", "")
+            new_sig = delta.get("new_signature", "")
+            content_str = (
+                f"{kind.title()} '{name}' changed in {file_path}: "
+                f"'{old_sig}' -> '{new_sig}'"
+            )
+
+        mem = make_memory(
+            content={"description": content_str, "delta": delta, "file": file_path},
+            memory_type="code_change",
+            project=project,
+            agent="code_sync",
+        )
+        memory_id = store.add_memory(mem)
+        memory_ids.append(memory_id)
+
+    return memory_ids
+
+
+# ---------------------------------------------------------------------------
+# Brief cache with smart invalidation
+# ---------------------------------------------------------------------------
+
+class _BriefCache:
+    """Per-project LRU cache for brief() results with TTL invalidation.
+
+    Key: (project, topic).  Max 50 entries.  TTL 5 minutes.
+    Invalidated on story completion, council decision, or code sync delta.
+    """
+
+    _MAX_ENTRIES = 50
+    _TTL_SECONDS = 300  # 5 minutes
+
+    def __init__(self) -> None:
+        self._cache: OrderedDict[tuple[str, str | None], tuple[float, dict]] = OrderedDict()
+
+    def get(self, project: str, topic: str | None = None) -> dict | None:
+        """Return cached brief if it exists and is not expired."""
+        key = (project, topic)
+        entry = self._cache.get(key)
+        if entry is None:
+            return None
+        ts, result = entry
+        if (time.monotonic() - ts) > self._TTL_SECONDS:
+            # Expired -- remove and return None
+            del self._cache[key]
+            return None
+        # Move to end (most recently used)
+        self._cache.move_to_end(key)
+        return result
+
+    def put(self, project: str, topic: str | None, result: dict) -> None:
+        """Store a brief result in the cache."""
+        key = (project, topic)
+        self._cache[key] = (time.monotonic(), result)
+        self._cache.move_to_end(key)
+        # Evict LRU entries if over capacity
+        while len(self._cache) > self._MAX_ENTRIES:
+            self._cache.popitem(last=False)
+
+    def invalidate(self, project: str | None = None) -> int:
+        """Invalidate cache entries.
+
+        If project is given, only entries for that project are removed.
+        If project is None, the entire cache is cleared.
+
+        Returns number of entries removed.
+        """
+        if project is None:
+            count = len(self._cache)
+            self._cache.clear()
+            return count
+
+        keys_to_remove = [
+            k for k in self._cache if k[0] == project
+        ]
+        for k in keys_to_remove:
+            del self._cache[k]
+        return len(keys_to_remove)
+
+    def size(self) -> int:
+        """Current number of entries."""
+        return len(self._cache)
+
+
+# Module-level singleton cache instance
+_brief_cache = _BriefCache()
+
+
+def invalidate_brief_cache(project: str | None = None) -> int:
+    """Invalidate the brief cache.
+
+    Called from:
+      - update_story (on story completion)
+      - end_council (on council decision)
+      - sync_file (on structural delta detected)
+
+    Args:
+        project: If given, only invalidate entries for this project.
+                 If None, clear the entire cache.
+
+    Returns:
+        Number of entries removed.
+    """
+    return _brief_cache.invalidate(project)
+
+
+def get_brief_cache() -> _BriefCache:
+    """Return the module-level brief cache (for testing)."""
+    return _brief_cache
 
 
 class Reasoner:
@@ -245,8 +589,16 @@ class Reasoner:
 
         This is what Prometheus asks Phoebe for before summoning a Titan.
         Returns: recent decisions, open questions, failed approaches,
-        unvalidated assumptions, active plans, and relevant memories.
+        unvalidated assumptions, active plans, relevant memories,
+        and code_context when topic references a file.
+
+        Results are cached per (project, topic) with 5-minute TTL.
         """
+        # Check cache first
+        cached = _brief_cache.get(project, topic)
+        if cached is not None:
+            return cached
+
         brief: dict[str, Any] = {"project": project}
 
         # Recent decisions
@@ -282,6 +634,15 @@ class Reasoner:
                 {"project": project, "topic": topic, "limit": limit},
             )
             brief["topic_memories"] = [r[0] for r in rows]
+
+        # code_context section for file-referencing topics
+        if topic:
+            code_section = _code_context_section(topic, self._conn)
+            if code_section:
+                brief["code_context"] = code_section
+
+        # Store in cache
+        _brief_cache.put(project, topic, brief)
 
         return brief
 
