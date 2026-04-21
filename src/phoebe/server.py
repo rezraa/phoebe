@@ -318,7 +318,7 @@ def update_story(
     phase: str | None = None,
     output: Union[dict, str, None] = None,
     input_context: Union[dict, str, None] = None,
-    store_as_memory: bool = False,
+    store_as_memory: bool | None = None,
     memory_project: str = "",
     conn: Any = None,
 ) -> dict:
@@ -335,6 +335,8 @@ def update_story(
         output: Titan's output for this story (dict or JSON string).
         input_context: Context passed to the Titan (dict or JSON string).
         store_as_memory: If True, create a memory node linked via produces.
+                         Defaults to True when status is "completed"/"done".
+                         Pass False explicitly to opt out on completion.
         memory_project: Project name for the memory node.
         conn: Kuzu connection (injected by Othrys).
 

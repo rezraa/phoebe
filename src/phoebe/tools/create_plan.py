@@ -14,6 +14,7 @@ def create_plan(
     name: str,
     goal: str,
     epics: list[dict[str, Any]],
+    project: str | None = None,
     conn: Any = None,
 ) -> dict:
     """Create a full execution plan with epics and stories.
@@ -24,6 +25,7 @@ def create_plan(
     Args:
         name: Plan name (e.g. "Build Theia Titan").
         goal: What the plan achieves.
+        project: Optional project tag for filtering (e.g. "othrys", "theia").
         epics: List of epic dicts, each with:
             - name: Epic name
             - description: What this epic achieves
@@ -47,7 +49,7 @@ def create_plan(
     epics = coerce(epics, list) or []
 
     # Create plan node
-    plan = make_plan(name=name, goal=goal)
+    plan = make_plan(name=name, goal=goal, project=project or "")
     plan_id = store.add_plan(plan)
 
     epic_ids = []
@@ -110,6 +112,7 @@ def create_plan(
     return {
         "created": True,
         "plan_id": plan_id,
+        "project": project or "",
         "epic_ids": epic_ids,
         "story_ids": story_ids,
         "edge_counts": edge_counts,

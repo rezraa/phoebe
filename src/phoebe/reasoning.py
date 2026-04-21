@@ -245,7 +245,7 @@ class Reasoner:
 
         This is what Prometheus asks Phoebe for before summoning a Titan.
         Returns: recent decisions, open questions, failed approaches,
-        unvalidated assumptions, and relevant memories.
+        unvalidated assumptions, active plans, and relevant memories.
         """
         brief: dict[str, Any] = {"project": project}
 
@@ -257,6 +257,21 @@ class Reasoner:
         brief["open_questions"] = self.open_questions(project)
         brief["unvalidated_assumptions"] = self.unvalidated_assumptions(project)
         brief["failed_approaches"] = self.failed_approaches(project)
+
+        # Active plans for this project (filtered by project tag)
+        if project:
+            try:
+                rows = self._execute(
+                    "MATCH (p:plans) WHERE p.project = $project "
+                    "RETURN p ORDER BY p.created_at DESC LIMIT $limit",
+                    {"project": project, "limit": limit},
+                )
+                brief["active_plans"] = [r[0] for r in rows]
+            except Exception:
+                # plans table may not exist in standalone tome mode
+                brief["active_plans"] = []
+        else:
+            brief["active_plans"] = []
 
         # Topic-specific memories
         if topic:

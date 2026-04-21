@@ -16,7 +16,7 @@ def update_story(
     phase: str | None = None,
     output: Union[dict[str, Any], str, None] = None,
     input_context: Union[dict[str, Any], str, None] = None,
-    store_as_memory: bool = False,
+    store_as_memory: bool | None = None,
     memory_project: str = "",
     conn: Any = None,
 ) -> dict:
@@ -34,8 +34,9 @@ def update_story(
         output: Titan's output for this story (dict or JSON string).
         input_context: Context passed to the Titan (dict or JSON string).
         store_as_memory: If True, also create a memory node linked via
-                         produces edge. Use when the output is an artifact
-                         worth remembering (design spec, test results, etc.).
+                         produces edge. Defaults to True when status is
+                         "completed" (or "done"), False otherwise. Pass
+                         False explicitly to opt out even on completion.
         memory_project: Project name for the memory node.
         conn: Kuzu connection (Othrys mode) or None (standalone).
 
@@ -54,6 +55,12 @@ def update_story(
         _STATUS_ALIASES = {"done": "completed"}
         fields["status"] = _STATUS_ALIASES.get(status, status)
         fields_updated.append("status")
+
+    # Auto-enable memory persistence when a story is completed,
+    # unless the caller explicitly opted out (store_as_memory=False).
+    if store_as_memory is None:
+        store_as_memory = fields.get("status") == "completed"
+
     if phase is not None:
         fields["phase"] = phase
         fields_updated.append("phase")
