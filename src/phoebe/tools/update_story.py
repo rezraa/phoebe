@@ -16,6 +16,7 @@ def update_story(
     phase: str | None = None,
     output: Union[dict[str, Any], str, None] = None,
     input_context: Union[dict[str, Any], str, None] = None,
+    acceptance_criteria: str | None = None,
     store_as_memory: bool | None = None,
     memory_project: str = "",
     conn: Any = None,
@@ -33,6 +34,7 @@ def update_story(
                testing|security|review|done.
         output: Titan's output for this story (dict or JSON string).
         input_context: Context passed to the Titan (dict or JSON string).
+        acceptance_criteria: Updated acceptance criteria for the story.
         store_as_memory: If True, also create a memory node linked via
                          produces edge. Defaults to True when status is
                          "completed" (or "done"), False otherwise. Pass
@@ -70,6 +72,9 @@ def update_story(
     if input_context is not None:
         fields["input_context"] = "JSON:" + json.dumps(input_context) if isinstance(input_context, dict) else input_context
         fields_updated.append("input_context")
+    if acceptance_criteria is not None:
+        fields["acceptance_criteria"] = acceptance_criteria
+        fields_updated.append("acceptance_criteria")
 
     if fields:
         store.update_story(story_id, **fields)

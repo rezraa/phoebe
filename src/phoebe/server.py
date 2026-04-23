@@ -318,11 +318,12 @@ def update_story(
     phase: str | None = None,
     output: Union[dict, str, None] = None,
     input_context: Union[dict, str, None] = None,
+    acceptance_criteria: str | None = None,
     store_as_memory: bool | None = None,
     memory_project: str = "",
     conn: Any = None,
 ) -> dict:
-    """Update a story's status, phase, output, or input_context.
+    """Update a story's status, phase, output, input_context, or acceptance_criteria.
 
     The workhorse tool — called every time a story changes state.
     Prometheus calls this to mark stories in_progress, completed, etc.
@@ -334,6 +335,7 @@ def update_story(
                testing|security|review|done.
         output: Titan's output for this story (dict or JSON string).
         input_context: Context passed to the Titan (dict or JSON string).
+        acceptance_criteria: Updated acceptance criteria for the story.
         store_as_memory: If True, create a memory node linked via produces.
                          Defaults to True when status is "completed"/"done".
                          Pass False explicitly to opt out on completion.
@@ -348,6 +350,7 @@ def update_story(
         phase=phase,
         output=coerce(output, dict),
         input_context=coerce(input_context, dict),
+        acceptance_criteria=acceptance_criteria,
         store_as_memory=store_as_memory,
         memory_project=memory_project,
         conn=conn,
