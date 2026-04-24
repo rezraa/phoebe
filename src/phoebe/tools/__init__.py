@@ -19,6 +19,7 @@ from phoebe.tools.create_plan import create_plan
 from phoebe.tools.add_epic import add_epic
 from phoebe.tools.add_story import add_story
 from phoebe.tools.update_story import update_story
+from phoebe.tools.update_epic import update_epic
 from phoebe.tools.get_plan import get_plan
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "add_epic",
     "add_story",
     "update_story",
+    "update_epic",
     "get_plan",
 ]
