@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from phoebe.tools._shared import get_store, coerce
+from phoebe.tools._shared import get_store, coerce_or_raise
 from phoebe.models import make_story
 
 
@@ -40,7 +40,7 @@ def add_story(
         {added: true, story_id}
     """
     store = get_store(conn)
-    depends_on_ids = coerce(depends_on_ids, list) or []
+    depends_on_ids = coerce_or_raise(depends_on_ids, list, [])
 
     story = make_story(
         epic_id=epic_id,

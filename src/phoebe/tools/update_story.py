@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from typing import Any, Union
 
-from phoebe.tools._shared import get_store, coerce
+from phoebe.tools._shared import get_store, coerce_str_or_container
 from phoebe.models import make_memory
 
 
@@ -46,8 +46,8 @@ def update_story(
         {updated: true, story_id, fields_updated: [...], memory_id: "..." or null}
     """
     store = get_store(conn)
-    output = coerce(output, dict)
-    input_context = coerce(input_context, dict)
+    output = coerce_str_or_container(output, dict)
+    input_context = coerce_str_or_container(input_context, dict)
 
     fields: dict[str, Any] = {}
     fields_updated: list[str] = []

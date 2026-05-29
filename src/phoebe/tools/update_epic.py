@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from typing import Any, Union
 
-from phoebe.tools._shared import get_store, coerce
+from phoebe.tools._shared import get_store, coerce_str_or_container
 
 
 def update_epic(
@@ -34,7 +34,7 @@ def update_epic(
         {updated: true, epic_id, fields_updated: [...]}
     """
     store = get_store(conn)
-    output = coerce(output, dict)
+    output = coerce_str_or_container(output, dict)
 
     fields: dict[str, Any] = {}
     fields_updated: list[str] = []

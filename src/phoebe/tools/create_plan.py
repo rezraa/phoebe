@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from typing import Any, Union
 
-from phoebe.tools._shared import get_store, coerce
+from phoebe.tools._shared import get_store, coerce_or_raise
 from phoebe.models import make_plan, make_epic, make_story
 
 
@@ -46,7 +46,7 @@ def create_plan(
          edge_counts: {has_epic, has_story, assigned_to, depends_on}}
     """
     store = get_store(conn)
-    epics = coerce(epics, list) or []
+    epics = coerce_or_raise(epics, list, [])
 
     # Create plan node
     plan = make_plan(name=name, goal=goal, project=project or "")
