@@ -41,15 +41,16 @@ def get_plan(
               e.g. "File Viewer" matches "File Viewer" plan).
         conn: Kuzu connection (Othrys mode) or None (standalone).
 
-    Returns:
+    Returns (LEAN tree — no story transcripts):
         {
             plan: {id, name, goal, status, created_at, ...},
             epics: [
                 {
-                    id, name, sequence, status, ...,
+                    id, name, description, sequence, status,
+                    acceptance_criteria,
                     stories: [
-                        {id, name, phase, assigned_titan, status,
-                         sequence, input_context, output, ...}
+                        {id, name, description, phase, assigned_titan,
+                         sequence, status, acceptance_criteria}
                     ]
                 }
             ],
@@ -58,6 +59,9 @@ def get_plan(
                 blocked, failed
             }
         }
+
+    Story ``input_context`` / ``output`` / ``full_output`` are NOT here —
+    drill down for them via the ``get_stories`` tool with the ids you need.
     """
     store = get_store(conn)
 

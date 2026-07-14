@@ -9,6 +9,24 @@ from __future__ import annotations
 import json
 from typing import Any
 
+# Lean column projections — single source of truth for the two-tier plan read.
+# get_plan reads the SKELETON sets (no heavy transcript fields); the batched
+# get_stories drill-down projects the heavy fields explicitly. Keeping the
+# column lists here means the RETURN clause and the dict keys can never drift.
+_EPIC_SKELETON_COLS = (
+    "id", "name", "description", "sequence", "status", "acceptance_criteria",
+)
+_STORY_SKELETON_COLS = (
+    "id", "name", "description", "phase", "assigned_titan", "sequence",
+    "status", "acceptance_criteria",
+)
+# Drill-down (get_stories) heavy shape. ``full_output`` is appended only when
+# the caller opts in, so the transcript is never materialised otherwise.
+_STORY_DRILLDOWN_COLS = (
+    "id", "name", "status", "phase", "assigned_titan", "sequence",
+    "input_context", "output",
+)
+
 
 class GraphStore:
     """CRUD operations on a Phoebe tome (Kuzu connection)."""
@@ -27,6 +45,27 @@ class GraphStore:
         while result.has_next():
             rows.append(result.get_next())
         return rows
+
+    def _project(
+        self,
+        *,
+        match: str,
+        alias: str,
+        cols: tuple[str, ...],
+        params: dict[str, Any],
+        order: str = "",
+    ) -> list[dict]:
+        """Run ``match`` with an explicit ``RETURN`` of ``cols`` and zip each row
+        into a dict keyed by ``cols``.
+
+        Single source of truth for column-projected reads: the skeleton
+        epic/story lists (get_plan) and the batched story drill-down all shape
+        rows through here, so heavy fields (input_context/output/full_output/
+        data) are never materialised unless a column set names them.
+        """
+        projection = ", ".join(f"{alias}.{c}" for c in cols)
+        rows = self._execute(f"{match} RETURN {projection}{order}", params)
+        return [dict(zip(cols, row)) for row in rows]
 
     def _insert_node(self, table: str, data: dict[str, Any]) -> str:
         """Insert a node and return its id."""
@@ -332,13 +371,14 @@ class GraphStore:
         return self._insert_node("epics", epic)
 
     def get_epics_for_plan(self, plan_id: str) -> list[dict]:
-        """Get all epics for a plan, ordered by sequence."""
-        rows = self._execute(
-            "MATCH (e:epics) WHERE e.plan_id = $plan_id "
-            "RETURN e ORDER BY e.sequence",
-            {"plan_id": plan_id},
+        """Get all epics for a plan (lean skeleton cols), ordered by sequence."""
+        return self._project(
+            match="MATCH (e:epics) WHERE e.plan_id = $plan_id",
+            alias="e",
+            cols=_EPIC_SKELETON_COLS,
+            params={"plan_id": plan_id},
+            order=" ORDER BY e.sequence",
         )
-        return [r[0] for r in rows]
 
     def update_epic(self, epic_id: str, **fields: Any) -> None:
         """Update epic fields."""
@@ -357,13 +397,47 @@ class GraphStore:
         return self._insert_node("stories", story)
 
     def get_stories_for_epic(self, epic_id: str) -> list[dict]:
-        """Get all stories for an epic, ordered by sequence."""
-        rows = self._execute(
-            "MATCH (s:stories) WHERE s.epic_id = $epic_id "
-            "RETURN s ORDER BY s.sequence",
-            {"epic_id": epic_id},
+        """Get all stories for an epic (lean skeleton cols), ordered by sequence.
+
+        Skeleton only — no input_context/output/full_output. Callers needing
+        those heavy fields drill down via :meth:`get_stories`.
+        """
+        return self._project(
+            match="MATCH (s:stories) WHERE s.epic_id = $epic_id",
+            alias="s",
+            cols=_STORY_SKELETON_COLS,
+            params={"epic_id": epic_id},
+            order=" ORDER BY s.sequence",
         )
-        return [r[0] for r in rows]
+
+    def get_stories(
+        self,
+        story_ids: list[str],
+        *,
+        include_full_output: bool = False,
+        project: str | None = None,
+    ) -> list[dict]:
+        """Batch-fetch heavy story fields by id in a single query.
+
+        Projects the drill-down columns (input_context + output, whole);
+        ``full_output`` is added to the RETURN list ONLY when
+        ``include_full_output`` is set, so the transcript is never read
+        otherwise. When ``project`` is given, the MATCH traverses
+        plan->epic->story and filters ``p.project`` byte-exact — a story
+        owned by another project simply does not match (defense-in-depth
+        scoping; the tool routes the absent id to ``missing``).
+        """
+        cols = _STORY_DRILLDOWN_COLS + (("full_output",) if include_full_output else ())
+        if project is None:
+            match = "MATCH (s:stories) WHERE s.id IN $ids"
+            params: dict[str, Any] = {"ids": list(story_ids)}
+        else:
+            match = (
+                "MATCH (p:plans)-[:has_epic]->(e:epics)-[:has_story]->(s:stories) "
+                "WHERE s.id IN $ids AND p.project = $project"
+            )
+            params = {"ids": list(story_ids), "project": project}
+        return self._project(match=match, alias="s", cols=cols, params=params)
 
     def update_story(self, story_id: str, **fields: Any) -> None:
         """Update story fields."""

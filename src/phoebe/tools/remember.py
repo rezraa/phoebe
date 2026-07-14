@@ -93,7 +93,13 @@ def remember(
     # Dedup: check if a memory with the same content already exists
     import json
     content_json = "JSON:" + json.dumps({"description": content})
-    existing = store.query_memories(project=project or None, limit=50)
+    # Defense-in-depth (story-07c4aead round-2): pass ``project`` through
+    # byte-exact rather than collapsing empty-string to None. Empty-project
+    # memories must dedup against the empty-project bucket, not against ALL
+    # projects (the ``or None`` widened dedup to global, a fail-OPEN if the
+    # dispatch injection ever leaks an empty value through). Post-injection
+    # this branch is unreachable, but the gate stays tight regardless.
+    existing = store.query_memories(project=project, limit=50)
     for ex in existing:
         if ex.get("content") == content_json:
             return {

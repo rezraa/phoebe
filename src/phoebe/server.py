@@ -24,6 +24,7 @@ from phoebe.tools.add_epic import add_epic as _add_epic
 from phoebe.tools.add_story import add_story as _add_story
 from phoebe.tools.update_story import update_story as _update_story
 from phoebe.tools.get_plan import get_plan as _get_plan
+from phoebe.tools.get_stories import get_stories as _get_stories
 from phoebe.tools._shared import coerce
 
 
@@ -362,11 +363,12 @@ def get_plan(
     plan_id: str | None = None,
     conn: Any = None,
 ) -> dict:
-    """Read a full execution plan with all epics and stories.
+    """Read the LEAN execution-plan tree — plan, epics, stories.
 
-    If plan_id is None, returns the most recently created plan.
-    The LLM uses this to figure out what's next, what's done,
-    and what outputs are available as input_context.
+    If plan_id is None, returns the most recently created plan. Stories carry
+    ids, names, statuses, descriptions and acceptance criteria — NOT their
+    input_context/output/full_output. To read a story's work product, drill
+    down with get_stories(story_ids=[...]).
 
     Args:
         plan_id: ID of the plan. None = latest plan.
@@ -375,6 +377,34 @@ def get_plan(
     Returns: {plan, epics: [{..., stories: [...]}], summary}
     """
     return _get_plan(plan_id=plan_id, conn=conn)
+
+
+@mcp.tool()
+def get_stories(
+    story_ids: Union[list[str], str],
+    include_full_output: bool = False,
+    conn: Any = None,
+) -> dict:
+    """Fetch heavy fields (input_context, output, opt-in full_output) for
+    specific stories by id — the drill-down companion to the lean get_plan.
+
+    get_plan returns a lean tree with NO story transcripts. Collect the ids
+    you need and pass them here to read their work product.
+
+    Args:
+        story_ids: Story ids (a list, a bare id string, or a JSON list
+                   string). Deduped; max 50 per call.
+        include_full_output: Also return each story's raw Titan transcript.
+        conn: Kuzu connection (injected by Othrys).
+
+    Returns: {stories: [{id, name, status, phase, assigned_titan, sequence,
+              input_context, output, [full_output]}], missing: [...]}
+    """
+    return _get_stories(
+        story_ids=story_ids,
+        include_full_output=include_full_output,
+        conn=conn,
+    )
 
 
 # ---------------------------------------------------------------------------
