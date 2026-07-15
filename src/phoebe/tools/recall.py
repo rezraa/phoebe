@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from phoebe._codec import decode_memory_content
 from phoebe.store import _MEMORY_STORED_COLS
 from phoebe.tools._shared import get_store
 
@@ -115,4 +116,10 @@ def recall(
             limit=limit,
         )
 
+    # Decode the polymorphic `content` column to its clean Python view at the
+    # single return chokepoint — same contract as get_memories — so recall never
+    # ships the raw double-encoded `JSON:{...}` wrapper. Covers all three paths.
+    for _m in memories:
+        if isinstance(_m, dict) and "content" in _m:
+            _m["content"] = decode_memory_content(_m["content"])
     return {"memories": memories, "count": len(memories)}

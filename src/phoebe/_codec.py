@@ -119,7 +119,11 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _WS_RE = re.compile(r"\s+")
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")   # [text](url) -> text
-_MD_EMPHASIS_RE = re.compile(r"[*_`~]+")             # ** __ ` ~~ markers
+_MD_EMPHASIS_RE = re.compile(r"[*`~]+|(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9])")
+"""Markdown emphasis/code markers (`** __ \\` ~~`). An underscore run is stripped
+ONLY when it is not flanked by word chars on both sides — so snake_case
+identifiers (``get_plan``, ``rss_mb_peak``) keep their underscores while
+``_italic_`` / ``__bold__`` markers are still removed."""
 _MD_LEADING_RE = re.compile(r"^\s*(?:#{1,6}\s+|>+\s*|[-*+]\s+|\d+[.)]\s+)")
 _SENTENCE_RE = re.compile(r"^(.*?[.!?])(?:\s|$)")
 
