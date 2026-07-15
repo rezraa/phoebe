@@ -325,7 +325,6 @@ def update_story(
     input_context: Union[dict, str, None] = None,
     acceptance_criteria: str | None = None,
     store_as_memory: bool | None = None,
-    memory_project: str = "",
     conn: Any = None,
 ) -> dict:
     """Update a story's status, phase, output, input_context, or acceptance_criteria.
@@ -343,8 +342,9 @@ def update_story(
         acceptance_criteria: Updated acceptance criteria for the story.
         store_as_memory: If True, create a memory node linked via produces.
                          Defaults to True when status is "completed"/"done".
-                         Pass False explicitly to opt out on completion.
-        memory_project: Project name for the memory node.
+                         Pass False explicitly to opt out on completion. The
+                         artifact-memory inherits its project from the story's
+                         own plan (story -> epic -> plan.project); no param.
         conn: Kuzu connection (injected by Othrys).
 
     Returns: {updated, story_id, fields_updated, memory_id}
@@ -357,7 +357,6 @@ def update_story(
         input_context=coerce(input_context, dict),
         acceptance_criteria=acceptance_criteria,
         store_as_memory=store_as_memory,
-        memory_project=memory_project,
         conn=conn,
     )
 

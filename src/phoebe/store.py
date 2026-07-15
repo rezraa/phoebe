@@ -557,6 +557,25 @@ class GraphStore:
         )
         return rows[0][0] if rows else None
 
+    def get_project_for_story(self, story_id: str) -> str:
+        """Resolve the owning plan's project for a story via
+        plan -[:has_epic]-> epic -[:has_story]-> story.
+
+        The parent chain determines the project unambiguously (a story
+        can't be cross-project). Returns "" for an orphan story with no
+        resolvable plan so callers never crash on a dangling id.
+        """
+        rows = self._project(
+            match=(
+                "MATCH (p:plans)-[:has_epic]->(e:epics)-[:has_story]->"
+                "(s:stories) WHERE s.id = $sid"
+            ),
+            alias="p",
+            cols=("project",),
+            params={"sid": story_id},
+        )
+        return rows[0]["project"] if rows else ""
+
     # ------------------------------------------------------------------
     # Plan edge creation
     # ------------------------------------------------------------------

@@ -18,7 +18,6 @@ def update_story(
     input_context: Union[dict[str, Any], str, None] = None,
     acceptance_criteria: str | None = None,
     store_as_memory: bool | None = None,
-    memory_project: str = "",
     conn: Any = None,
 ) -> dict:
     """Update a story's fields.
@@ -39,7 +38,10 @@ def update_story(
                          produces edge. Defaults to True when status is
                          "completed" (or "done"), False otherwise. Pass
                          False explicitly to opt out even on completion.
-        memory_project: Project name for the memory node.
+                         The artifact-memory inherits its project from the
+                         story's own plan (story -> epic -> plan.project);
+                         there is no project parameter — the parent chain
+                         scopes it unambiguously, even cross-project.
         conn: Kuzu connection (Othrys mode) or None (standalone).
 
     Returns:
@@ -88,7 +90,9 @@ def update_story(
             content={"story": story_name, "artifact": output},
             memory_type="context",
             agent=story.get("assigned_titan", "unknown") if story else "unknown",
-            project=memory_project,
+            # The artifact inherits the story's plan project (story -> epic ->
+            # plan.project); the parent chain scopes it, not any caller param.
+            project=store.get_project_for_story(story_id),
         )
         memory_id = store.add_memory(mem)
         store.link_story_produces(story_id, memory_id)
