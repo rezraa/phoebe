@@ -22,6 +22,7 @@ from phoebe.tools.update_story import update_story
 from phoebe.tools.update_epic import update_epic
 from phoebe.tools.get_plan import get_plan
 from phoebe.tools.get_stories import get_stories
+from phoebe.tools.get_memories import get_memories
 
 __all__ = [
     "remember",
@@ -38,4 +39,5 @@ __all__ = [
     "update_epic",
     "get_plan",
     "get_stories",
+    "get_memories",
 ]

@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Union
 
+from phoebe._codec import json_encode
 from phoebe.tools._shared import get_store, coerce_str_or_container
 from phoebe.models import make_memory
 
@@ -67,10 +67,10 @@ def update_story(
         fields["phase"] = phase
         fields_updated.append("phase")
     if output is not None:
-        fields["output"] = "JSON:" + json.dumps(output) if isinstance(output, dict) else output
+        fields["output"] = json_encode(output) if isinstance(output, dict) else output
         fields_updated.append("output")
     if input_context is not None:
-        fields["input_context"] = "JSON:" + json.dumps(input_context) if isinstance(input_context, dict) else input_context
+        fields["input_context"] = json_encode(input_context) if isinstance(input_context, dict) else input_context
         fields_updated.append("input_context")
     if acceptance_criteria is not None:
         fields["acceptance_criteria"] = acceptance_criteria
@@ -92,14 +92,6 @@ def update_story(
         )
         memory_id = store.add_memory(mem)
         store.link_story_produces(story_id, memory_id)
-
-    # D3: Invalidate brief cache on story completion
-    if fields.get("status") == "completed":
-        try:
-            from phoebe.reasoning import invalidate_brief_cache
-            invalidate_brief_cache(memory_project or None)
-        except Exception:
-            pass  # cache invalidation is best-effort
 
     return {
         "updated": True,

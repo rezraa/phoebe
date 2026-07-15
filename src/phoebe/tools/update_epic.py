@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Union
 
+from phoebe._codec import json_decode, json_encode
 from phoebe.tools._shared import get_store, coerce_str_or_container
 
 
@@ -51,19 +51,12 @@ def update_epic(
             {"id": epic_id},
         )
         if rows:
-            raw = rows[0][0] or ""
-            if isinstance(raw, str) and raw.startswith("JSON:"):
-                raw = raw[5:]
-            if raw:
-                try:
-                    parsed = json.loads(raw)
-                    if isinstance(parsed, dict):
-                        existing_data = parsed
-                except (ValueError, TypeError):
-                    existing_data = {}
+            parsed = json_decode(rows[0][0])
+            if isinstance(parsed, dict):
+                existing_data = parsed
 
         existing_data["output"] = output
-        fields["data"] = "JSON:" + json.dumps(existing_data)
+        fields["data"] = json_encode(existing_data)
         fields_updated.append("output")
 
     if fields:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Union
 
+from phoebe._codec import json_encode
 from phoebe.tools._shared import (
     get_store, coerce_or_raise, normalize_kwargs,
     make_memory, make_source, make_entity, make_milestone,
@@ -90,9 +91,12 @@ def remember(
         ) from exc
     confidence = _resolve_confidence(confidence)
 
-    # Dedup: check if a memory with the same content already exists
-    import json
-    content_json = "JSON:" + json.dumps({"description": content})
+    # Dedup: check if a memory with the same content already exists. The stored
+    # form wraps the bare string as {"description": content} (make_memory), so
+    # the dedup probe must encode the SAME envelope to byte-match. The read-side
+    # decoder (decode_memory_content) unwraps this lone-description envelope back
+    # to the bare string — the wrapper is a storage detail, not caller-visible.
+    content_json = json_encode({"description": content})
     # Defense-in-depth (story-07c4aead round-2): pass ``project`` through
     # byte-exact rather than collapsing empty-string to None. Empty-project
     # memories must dedup against the empty-project bucket, not against ALL

@@ -16,17 +16,22 @@ def brief(
 ) -> dict:
     """Generate a context brief for a project and optional topic.
 
-    Returns recent decisions, open questions, failed approaches,
-    unvalidated assumptions, and topic-specific memories.
+    Body-store + id-list shape: ``memories`` is a map keyed by id (each a lean
+    index record — derived title, NO content); each facet
+    (recent_decisions, open_questions, unvalidated_assumptions,
+    failed_approaches, topic_memories) is an ORDERED LIST OF IDS into it. Drill
+    into a memory's full content with the ``get_memories`` tool.
 
     Args:
         project: Project name.
         topic: Optional topic to focus on.
-        limit: Max results per category.
+        limit: Max results per facet.
         conn: Kuzu connection (Othrys mode) or None (standalone mode).
 
-    Returns: {project, recent_decisions, open_questions, failed_approaches,
-              unvalidated_assumptions, topic_memories}
+    Returns: {project, memories: {id: {...index...}}, recent_decisions: [id],
+              open_questions: [id], unvalidated_assumptions: [id],
+              failed_approaches: [id], topic_memories: [id], active_plans: [...],
+              counts: {facet: n}}
     """
     reasoner = get_reasoner(conn)
     return reasoner.context_brief(project or "", topic=topic or None, limit=limit)

@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from phoebe._codec import json_encode
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -43,10 +45,9 @@ def make_memory(
     id: str | None = None,
 ) -> dict[str, Any]:
     """Create a memory node dict ready for insertion."""
-    import json
     return {
         "id": id or _id("m"),
-        "content": "JSON:" + json.dumps(content) if isinstance(content, dict) else content,
+        "content": json_encode(content) if isinstance(content, dict) else content,
         "memory_type": memory_type,
         "status": status,
         "outcome": outcome or "unknown",
@@ -77,7 +78,6 @@ def make_source(
     id: str | None = None,
 ) -> dict[str, Any]:
     """Create a source node dict ready for insertion."""
-    import json
     return {
         "id": id or _id("s"),
         "uri": uri,
@@ -87,7 +87,7 @@ def make_source(
         "last_verified": _now(),
         "stale": False,
         "extraction_model": extraction_model,
-        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
+        "data": json_encode(data) if data else json_encode({}),
     }
 
 
@@ -109,12 +109,11 @@ def make_entity(
     id: str | None = None,
 ) -> dict[str, Any]:
     """Create an entity node dict ready for insertion."""
-    import json
     return {
         "id": id or _id("e"),
         "name": name,
         "entity_type": entity_type,
-        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
+        "data": json_encode(data) if data else json_encode({}),
     }
 
 
@@ -138,7 +137,6 @@ def make_milestone(
     id: str | None = None,
 ) -> dict[str, Any]:
     """Create a milestone node dict ready for insertion."""
-    import json
     return {
         "id": id or _id("ms"),
         "name": name,
@@ -146,7 +144,7 @@ def make_milestone(
         "start_date": start_date or _now(),
         "end_date": end_date,
         "status": status,
-        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
+        "data": json_encode(data) if data else json_encode({}),
     }
 
 
@@ -177,7 +175,6 @@ def make_plan(
     id: str | None = None,
 ) -> dict[str, Any]:
     """Create a plan node dict ready for insertion."""
-    import json
     now = _now()
     return {
         "id": id or _id("plan"),
@@ -188,7 +185,7 @@ def make_plan(
         "created_by": created_by,
         "created_at": now,
         "updated_at": now,
-        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
+        "data": json_encode(data) if data else json_encode({}),
     }
 
 
@@ -204,7 +201,6 @@ def make_epic(
     id: str | None = None,
 ) -> dict[str, Any]:
     """Create an epic node dict ready for insertion."""
-    import json
     return {
         "id": id or _id("epic"),
         "plan_id": plan_id,
@@ -213,7 +209,7 @@ def make_epic(
         "sequence": sequence,
         "status": status,
         "acceptance_criteria": acceptance_criteria,
-        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
+        "data": json_encode(data) if data else json_encode({}),
     }
 
 
@@ -233,7 +229,6 @@ def make_story(
     id: str | None = None,
 ) -> dict[str, Any]:
     """Create a story node dict ready for insertion."""
-    import json
     now = _now()
     return {
         "id": id or _id("story"),
@@ -244,10 +239,10 @@ def make_story(
         "assigned_titan": assigned_titan,
         "sequence": sequence,
         "status": status,
-        "input_context": "JSON:" + json.dumps(input_context) if input_context else "JSON:{}",
-        "output": "JSON:" + json.dumps(output) if output else "JSON:{}",
+        "input_context": json_encode(input_context) if input_context else json_encode({}),
+        "output": json_encode(output) if output else json_encode({}),
         "acceptance_criteria": acceptance_criteria,
         "created_at": now,
         "updated_at": now,
-        "data": "JSON:" + json.dumps(data) if data else "JSON:{}",
+        "data": json_encode(data) if data else json_encode({}),
     }

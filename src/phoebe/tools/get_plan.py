@@ -5,18 +5,25 @@ from __future__ import annotations
 
 from typing import Any
 
+from phoebe.store import _PLAN_SKELETON_COLS
 from phoebe.tools._shared import get_store
 
 
 def _find_plan_by_name(store: Any, name: str) -> dict | None:
-    """Find a plan by case-insensitive substring match on name."""
+    """Find a plan by case-insensitive substring match on name.
+
+    Skeleton-column projection (no ``RETURN p`` -> no driver ``_ID``/``_LABEL``
+    pointers, no heavy ``data`` blob), same shape as ``store.get_plan``.
+    """
     needle = name.lower()
-    # Use the store's connection to search all plans
-    rows = store._execute(
-        "MATCH (p:plans) RETURN p ORDER BY p.created_at DESC"
+    plans = store._project(
+        match="MATCH (p:plans)",
+        alias="p",
+        cols=_PLAN_SKELETON_COLS,
+        params={},
+        order=" ORDER BY p.created_at DESC",
     )
-    for row in rows:
-        plan = row[0]
+    for plan in plans:
         plan_name = (plan.get("name") or "").lower()
         if needle in plan_name:
             return plan

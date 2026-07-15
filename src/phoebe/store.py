@@ -6,8 +6,9 @@ All writes go through this module. Queries return plain dicts.
 
 from __future__ import annotations
 
-import json
 from typing import Any
+
+from phoebe._codec import decode_memory_content, derive_title
 
 # Lean column projections — single source of truth for the two-tier plan read.
 # get_plan reads the SKELETON sets (no heavy transcript fields); the batched
@@ -26,6 +27,61 @@ _STORY_DRILLDOWN_COLS = (
     "id", "name", "status", "phase", "assigned_titan", "sequence",
     "input_context", "output",
 )
+# Plan-header skeleton (get_plan / get_latest_plan / _find_plan_by_name and the
+# brief's active_plans). Same lean discipline as the epic/story skeletons: every
+# plan read RETURNs these explicit columns (never ``RETURN p``), which drops the
+# driver's physical ``_ID``/``_LABEL`` pointers AND the heavy polymorphic
+# ``data`` blob by simply not selecting them, while keeping the semantic ``id``.
+_PLAN_SKELETON_COLS = (
+    "id", "name", "goal", "status", "project",
+    "created_by", "created_at", "updated_at",
+)
+
+# ---------------------------------------------------------------------------
+# Memory column projections — the two-tier memory read (mirrors the plan read).
+# ---------------------------------------------------------------------------
+# STORED columns — EXACTLY the ``memories`` node table (phoebe.schema). Every
+# memory read RETURNs these explicit columns (never ``RETURN m``), which drops
+# the driver's physical ``_ID``/``_LABEL`` pointers by simply not selecting
+# them, while keeping the semantic ``id``. ``source_uri`` / ``milestone`` are
+# NOT columns — they are edges (extracted_from -> sources, occurred_during ->
+# milestones); provenance is a traversal, not a column projection, so it is
+# out of these tiers by design.
+_MEMORY_STORED_COLS = (
+    "id", "content", "memory_type", "status", "outcome",
+    "agent", "project", "confidence", "timestamp",
+)
+# INDEX tier (context_brief) — lean. ``title`` is DERIVED from ``content`` at
+# read time (derive_title); ``content`` itself is OMITTED. ``title`` is NOT a
+# stored column (council override: no ALTER TABLE, no backfill).
+_MEMORY_INDEX_COLS = (
+    "id", "title", "memory_type", "status", "outcome",
+    "agent", "project", "confidence", "timestamp",
+)
+# DETAIL tier (get_memories) — index shape + ``content`` decoded WHOLE.
+_MEMORY_DETAIL_COLS = _MEMORY_INDEX_COLS + ("content",)
+
+
+def memory_index_record(raw: dict[str, Any]) -> dict[str, Any]:
+    """Shape a raw stored-column memory dict into the lean INDEX record.
+
+    Derives ``title`` from ``content`` and OMITS ``content``. Keys are exactly
+    :data:`_MEMORY_INDEX_COLS`.
+    """
+    rec = {c: raw.get(c) for c in _MEMORY_INDEX_COLS if c != "title"}
+    rec["title"] = derive_title(raw.get("content"))
+    return {c: rec[c] for c in _MEMORY_INDEX_COLS}
+
+
+def memory_detail_record(raw: dict[str, Any]) -> dict[str, Any]:
+    """Shape a raw stored-column memory dict into the DETAIL record.
+
+    Same as the index record plus ``content`` decoded WHOLE (never truncated).
+    Keys are exactly :data:`_MEMORY_DETAIL_COLS`.
+    """
+    rec = memory_index_record(raw)
+    rec["content"] = decode_memory_content(raw.get("content"))
+    return rec
 
 
 class GraphStore:
@@ -113,12 +169,16 @@ class GraphStore:
         return self._insert_node("memories", memory)
 
     def get_memory(self, memory_id: str) -> dict[str, Any] | None:
-        """Get a single memory by id."""
-        rows = self._execute(
-            "MATCH (m:memories) WHERE m.id = $id RETURN m",
-            {"id": memory_id},
+        """Get a single memory by id (explicit stored columns; no ``RETURN m``,
+        so the driver's ``_ID``/``_LABEL`` pointers never surface). ``content``
+        is returned in its raw stored form — decode at the view tier."""
+        rows = self._project(
+            match="MATCH (m:memories) WHERE m.id = $id",
+            alias="m",
+            cols=_MEMORY_STORED_COLS,
+            params={"id": memory_id},
         )
-        return rows[0][0] if rows else None
+        return rows[0] if rows else None
 
     def query_memories(
         self,
@@ -145,10 +205,43 @@ class GraphStore:
             conditions.append("m.status = $status")
             params["status"] = status
 
+        params["limit"] = limit
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-        query = f"MATCH (m:memories){where} RETURN m ORDER BY m.timestamp DESC LIMIT {limit}"
-        rows = self._execute(query, params)
-        return [r[0] for r in rows]
+        # Explicit stored-column projection (no ``RETURN m`` -> no _ID/_LABEL);
+        # ``limit`` is BOUND, never f-string-interpolated (CWE-943).
+        return self._project(
+            match=f"MATCH (m:memories){where}",
+            alias="m",
+            cols=_MEMORY_STORED_COLS,
+            params=params,
+            order=" ORDER BY m.timestamp DESC LIMIT $limit",
+        )
+
+    def get_memories(
+        self,
+        memory_ids: list[str],
+        *,
+        project: str | None = None,
+    ) -> list[dict]:
+        """Batch-fetch memories by id in a single query (the brief drill-down).
+
+        Projects the stored columns (``content`` raw — decode at the view
+        tier). When ``project`` is given, filters ``m.project`` byte-exact — a
+        memory owned by another project simply does not match, and the tool
+        routes the absent id to ``missing`` (defense-in-depth scoping; mirrors
+        ``get_stories``). ``project=None`` (standalone) applies no scoping.
+        """
+        if project is None:
+            match = "MATCH (m:memories) WHERE m.id IN $ids"
+            params: dict[str, Any] = {"ids": list(memory_ids)}
+        else:
+            match = (
+                "MATCH (m:memories) WHERE m.id IN $ids AND m.project = $project"
+            )
+            params = {"ids": list(memory_ids), "project": project}
+        return self._project(
+            match=match, alias="m", cols=_MEMORY_STORED_COLS, params=params,
+        )
 
     def update_memory_status(self, memory_id: str, status: str) -> None:
         """Update a memory's status."""
@@ -338,19 +431,26 @@ class GraphStore:
         return self._insert_node("plans", plan)
 
     def get_plan(self, plan_id: str) -> dict[str, Any] | None:
-        """Get a single plan by id."""
-        rows = self._execute(
-            "MATCH (p:plans) WHERE p.id = $id RETURN p",
-            {"id": plan_id},
+        """Get a single plan by id (skeleton columns only; no ``RETURN p`` ->
+        no driver ``_ID``/``_LABEL`` pointers and no heavy ``data`` blob)."""
+        rows = self._project(
+            match="MATCH (p:plans) WHERE p.id = $id",
+            alias="p",
+            cols=_PLAN_SKELETON_COLS,
+            params={"id": plan_id},
         )
-        return rows[0][0] if rows else None
+        return rows[0] if rows else None
 
     def get_latest_plan(self) -> dict[str, Any] | None:
-        """Get the most recently created plan."""
-        rows = self._execute(
-            "MATCH (p:plans) RETURN p ORDER BY p.created_at DESC LIMIT 1"
+        """Get the most recently created plan (skeleton columns only)."""
+        rows = self._project(
+            match="MATCH (p:plans)",
+            alias="p",
+            cols=_PLAN_SKELETON_COLS,
+            params={},
+            order=" ORDER BY p.created_at DESC LIMIT 1",
         )
-        return rows[0][0] if rows else None
+        return rows[0] if rows else None
 
     def update_plan(self, plan_id: str, **fields: Any) -> None:
         """Update plan fields."""

@@ -4,19 +4,22 @@
 These are the tools that make Phoebe more than CRUD. She walks edges,
 traces causality, detects patterns, and surfaces insights.
 
-Includes code_context section in brief() for file-referencing topics,
-structural delta detection after sync (persisted as code_change memories),
-and per-project LRU brief cache with smart invalidation.
+Includes code_context section in brief() for file-referencing topics and
+structural delta detection after sync (persisted as code_change memories).
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import re
-import time
-from collections import OrderedDict
 from typing import Any
+
+from phoebe.store import (
+    GraphStore,
+    _MEMORY_STORED_COLS,
+    _PLAN_SKELETON_COLS,
+    memory_index_record,
+)
 
 log = logging.getLogger(__name__)
 
@@ -263,96 +266,18 @@ def persist_structural_delta(
 
 
 # ---------------------------------------------------------------------------
-# Brief cache with smart invalidation
+# Memory-facet WHERE cores + shared ORDER/LIMIT tail.
 # ---------------------------------------------------------------------------
-
-class _BriefCache:
-    """Per-project LRU cache for brief() results with TTL invalidation.
-
-    Key: (project, topic).  Max 50 entries.  TTL 5 minutes.
-    Invalidated on story completion, council decision, or code sync delta.
-    """
-
-    _MAX_ENTRIES = 50
-    _TTL_SECONDS = 300  # 5 minutes
-
-    def __init__(self) -> None:
-        self._cache: OrderedDict[tuple[str, str | None], tuple[float, dict]] = OrderedDict()
-
-    def get(self, project: str, topic: str | None = None) -> dict | None:
-        """Return cached brief if it exists and is not expired."""
-        key = (project, topic)
-        entry = self._cache.get(key)
-        if entry is None:
-            return None
-        ts, result = entry
-        if (time.monotonic() - ts) > self._TTL_SECONDS:
-            # Expired -- remove and return None
-            del self._cache[key]
-            return None
-        # Move to end (most recently used)
-        self._cache.move_to_end(key)
-        return result
-
-    def put(self, project: str, topic: str | None, result: dict) -> None:
-        """Store a brief result in the cache."""
-        key = (project, topic)
-        self._cache[key] = (time.monotonic(), result)
-        self._cache.move_to_end(key)
-        # Evict LRU entries if over capacity
-        while len(self._cache) > self._MAX_ENTRIES:
-            self._cache.popitem(last=False)
-
-    def invalidate(self, project: str | None = None) -> int:
-        """Invalidate cache entries.
-
-        If project is given, only entries for that project are removed.
-        If project is None, the entire cache is cleared.
-
-        Returns number of entries removed.
-        """
-        if project is None:
-            count = len(self._cache)
-            self._cache.clear()
-            return count
-
-        keys_to_remove = [
-            k for k in self._cache if k[0] == project
-        ]
-        for k in keys_to_remove:
-            del self._cache[k]
-        return len(keys_to_remove)
-
-    def size(self) -> int:
-        """Current number of entries."""
-        return len(self._cache)
-
-
-# Module-level singleton cache instance
-_brief_cache = _BriefCache()
-
-
-def invalidate_brief_cache(project: str | None = None) -> int:
-    """Invalidate the brief cache.
-
-    Called from:
-      - update_story (on story completion)
-      - end_council (on council decision)
-      - sync_file (on structural delta detected)
-
-    Args:
-        project: If given, only invalidate entries for this project.
-                 If None, clear the entire cache.
-
-    Returns:
-        Number of entries removed.
-    """
-    return _brief_cache.invalidate(project)
-
-
-def get_brief_cache() -> _BriefCache:
-    """Return the module-level brief cache (for testing)."""
-    return _brief_cache
+# Single source of truth for each facet's filter: context_brief derives BOTH
+# the limit-capped id list AND the true unbounded COUNT(*) from the same
+# ``(match, params)`` spec, so the count can never silently drift from the list.
+_FACET_ORDER = " ORDER BY m.timestamp DESC LIMIT $limit"
+_OPEN_QUESTIONS_COND = (
+    "m.status = 'open' "
+    "AND m.memory_type IN ['decision', 'question', 'assumption']"
+)
+_FAILED_APPROACHES_COND = "m.outcome = 'failure'"
+_UNVALIDATED_COND = "m.memory_type = 'assumption' AND m.status <> 'superseded'"
 
 
 class Reasoner:
@@ -360,6 +285,9 @@ class Reasoner:
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
+        # Reuse the store's single column-projection primitive (_project) for
+        # memory/plan facet reads instead of re-rolling RETURN clauses here.
+        self._store = GraphStore(conn)
 
     def _execute(self, query: str, params: dict[str, Any] | None = None) -> list:
         result = self._conn.execute(query, parameters=params or {})
@@ -367,6 +295,32 @@ class Reasoner:
         while result.has_next():
             rows.append(result.get_next())
         return rows
+
+    def _facet_spec(
+        self, base_condition: str, project: str | None, limit: int,
+        *, extra_params: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Build the ``(match, params)`` for a ``memories`` facet: ``base_condition``
+        plus an optional byte-exact project scope. The SINGLE source of a facet's
+        WHERE — the capped id list and the true COUNT(*) both consume it, so they
+        can never drift (see :meth:`_facet_total`). ``limit`` is always BOUND."""
+        conditions = base_condition
+        params: dict[str, Any] = {"limit": limit}
+        if extra_params:
+            params.update(extra_params)
+        if project:
+            conditions += " AND m.project = $project"
+            params["project"] = project
+        return f"MATCH (m:memories) WHERE {conditions}", params
+
+    def _facet_total(self, match: str, params: dict[str, Any]) -> int:
+        """UNBOUNDED ``COUNT(*)`` over a facet's WHERE — the true total behind the
+        ``limit``-capped id list. ``context_brief``'s ``counts`` uses this so an
+        agent sees 'showing N of M' and knows when to ``recall`` for the rest.
+        ``$limit`` is dropped: the count query intentionally carries no LIMIT."""
+        count_params = {k: v for k, v in params.items() if k != "limit"}
+        rows = self._execute(f"{match} RETURN COUNT(*)", count_params)
+        return int(rows[0][0]) if rows else 0
 
     # ------------------------------------------------------------------
     # Causal chain traversal
@@ -523,45 +477,33 @@ class Reasoner:
             for r in rows
         ]
 
-    def open_questions(self, project: str | None = None) -> list[dict]:
-        """What's still unresolved?"""
-        conditions = "m.status = 'open'"
-        params: dict[str, Any] = {}
-        if project:
-            conditions += " AND m.project = $project"
-            params["project"] = project
-        rows = self._execute(
-            f"MATCH (m:memories) WHERE {conditions} AND m.memory_type IN ['decision', 'question', 'assumption'] "
-            "RETURN m ORDER BY m.timestamp DESC",
-            params,
-        )
-        return [r[0] for r in rows]
+    def open_questions(self, project: str | None = None, limit: int = 20) -> list[dict]:
+        """What's still unresolved? BOUNDED by ``limit`` (D6: was unbounded).
 
-    def failed_approaches(self, project: str | None = None) -> list[dict]:
-        """What did we try that failed?"""
-        conditions = "m.outcome = 'failure'"
-        params: dict[str, Any] = {}
-        if project:
-            conditions += " AND m.project = $project"
-            params["project"] = project
-        rows = self._execute(
-            f"MATCH (m:memories) WHERE {conditions} RETURN m ORDER BY m.timestamp DESC",
-            params,
+        Projected stored columns (no ``RETURN m`` -> no _ID/_LABEL); ``limit``
+        is BOUND, never f-string-interpolated.
+        """
+        match, params = self._facet_spec(_OPEN_QUESTIONS_COND, project, limit)
+        return self._store._project(
+            match=match, alias="m", cols=_MEMORY_STORED_COLS,
+            params=params, order=_FACET_ORDER,
         )
-        return [r[0] for r in rows]
 
-    def unvalidated_assumptions(self, project: str | None = None) -> list[dict]:
-        """What assumptions are we still making?"""
-        conditions = "m.memory_type = 'assumption' AND m.status <> 'superseded'"
-        params: dict[str, Any] = {}
-        if project:
-            conditions += " AND m.project = $project"
-            params["project"] = project
-        rows = self._execute(
-            f"MATCH (m:memories) WHERE {conditions} RETURN m ORDER BY m.timestamp DESC",
-            params,
+    def failed_approaches(self, project: str | None = None, limit: int = 20) -> list[dict]:
+        """What did we try that failed? BOUNDED by ``limit`` (D6: was unbounded)."""
+        match, params = self._facet_spec(_FAILED_APPROACHES_COND, project, limit)
+        return self._store._project(
+            match=match, alias="m", cols=_MEMORY_STORED_COLS,
+            params=params, order=_FACET_ORDER,
         )
-        return [r[0] for r in rows]
+
+    def unvalidated_assumptions(self, project: str | None = None, limit: int = 20) -> list[dict]:
+        """What assumptions are we still making? BOUNDED by ``limit`` (D6)."""
+        match, params = self._facet_spec(_UNVALIDATED_COND, project, limit)
+        return self._store._project(
+            match=match, alias="m", cols=_MEMORY_STORED_COLS,
+            params=params, order=_FACET_ORDER,
+        )
 
     # ------------------------------------------------------------------
     # Staleness analysis
@@ -588,52 +530,85 @@ class Reasoner:
         """Generate a context brief for a project (and optional topic).
 
         This is what Prometheus asks Phoebe for before summoning a Titan.
-        Returns: recent decisions, open questions, failed approaches,
-        unvalidated assumptions, active plans, relevant memories,
-        and code_context when topic references a file.
 
-        Results are cached per (project, topic) with 5-minute TTL.
+        Shape (body-store + ordered id-list facets — a memory is serialized
+        ONCE, referenced by id everywhere):
+          {
+            "project": ...,
+            "memories": { id: <lean index record>, ... },  # derived title, NO content
+            "recent_decisions": [id, ...],        # ordered id lists
+            "open_questions": [id, ...],
+            "unvalidated_assumptions": [id, ...],
+            "failed_approaches": [id, ...],
+            "topic_memories": [id, ...],           # only when topic given
+            "active_plans": [ <projected plan>, ... ],
+            "counts": { facet: n, ... },           # TRUE unbounded total per facet
+            "code_context": "...",                 # only when topic references a file
+          }
+
+        The brief is always rebuilt fresh (no cache) — it is cheap and
+        freshness-critical. Each ``counts`` value is the UNBOUNDED total for
+        that facet (a ``COUNT(*)`` over the same WHERE as the capped id list),
+        so an agent can tell when to ``recall`` for rows beyond ``limit``.
         """
-        # Check cache first
-        cached = _brief_cache.get(project, topic)
-        if cached is not None:
-            return cached
-
         brief: dict[str, Any] = {"project": project}
+        memories: dict[str, dict] = {}
+        counts: dict[str, int] = {}
 
-        # Recent decisions
-        decisions = self.query_by_type(project, "decision", limit=limit)
-        brief["recent_decisions"] = decisions
+        def _facet(name: str, match: str, params: dict[str, Any]) -> None:
+            """Fold a facet's ``limit``-capped rows into the shared body-store,
+            emit the ordered id list, AND record the TRUE unbounded total in
+            ``counts`` (honest 'showing N of M' — see :meth:`_facet_total`)."""
+            rows = self._store._project(
+                match=match, alias="m", cols=_MEMORY_STORED_COLS,
+                params=params, order=_FACET_ORDER,
+            )
+            ids: list[str] = []
+            for raw in rows:
+                mid = raw.get("id")
+                if not mid:
+                    continue
+                if mid not in memories:
+                    memories[mid] = memory_index_record(raw)
+                ids.append(mid)
+            brief[name] = ids
+            counts[name] = self._facet_total(match, params)
 
-        # Open items
-        brief["open_questions"] = self.open_questions(project)
-        brief["unvalidated_assumptions"] = self.unvalidated_assumptions(project)
-        brief["failed_approaches"] = self.failed_approaches(project)
+        _facet("recent_decisions",
+               *self._facet_spec("m.memory_type = 'decision'", project, limit))
+        _facet("open_questions",
+               *self._facet_spec(_OPEN_QUESTIONS_COND, project, limit))
+        _facet("unvalidated_assumptions",
+               *self._facet_spec(_UNVALIDATED_COND, project, limit))
+        _facet("failed_approaches",
+               *self._facet_spec(_FAILED_APPROACHES_COND, project, limit))
 
-        # Active plans for this project (filtered by project tag)
+        # Active plans for this project — projected (no whole-node RETURN p).
         if project:
             try:
-                rows = self._execute(
-                    "MATCH (p:plans) WHERE p.project = $project "
-                    "RETURN p ORDER BY p.created_at DESC LIMIT $limit",
-                    {"project": project, "limit": limit},
+                brief["active_plans"] = self._store._project(
+                    match="MATCH (p:plans) WHERE p.project = $project",
+                    alias="p", cols=_PLAN_SKELETON_COLS,
+                    params={"project": project, "limit": limit},
+                    order=" ORDER BY p.created_at DESC LIMIT $limit",
                 )
-                brief["active_plans"] = [r[0] for r in rows]
             except Exception:
                 # plans table may not exist in standalone tome mode
                 brief["active_plans"] = []
         else:
             brief["active_plans"] = []
 
-        # Topic-specific memories
+        # Topic-specific memories (entity-name match).
         if topic:
-            rows = self._execute(
+            _facet(
+                "topic_memories",
                 "MATCH (m:memories)-[:about]->(e:entities) "
-                "WHERE m.project = $project AND e.name CONTAINS $topic "
-                "RETURN m ORDER BY m.timestamp DESC LIMIT $limit",
+                "WHERE m.project = $project AND e.name CONTAINS $topic",
                 {"project": project, "topic": topic, "limit": limit},
             )
-            brief["topic_memories"] = [r[0] for r in rows]
+
+        brief["memories"] = memories
+        brief["counts"] = counts
 
         # code_context section for file-referencing topics
         if topic:
@@ -641,16 +616,15 @@ class Reasoner:
             if code_section:
                 brief["code_context"] = code_section
 
-        # Store in cache
-        _brief_cache.put(project, topic, brief)
-
         return brief
 
     def query_by_type(self, project: str, memory_type: str, limit: int = 20) -> list[dict]:
-        """Get memories of a specific type for a project."""
-        rows = self._execute(
-            "MATCH (m:memories) WHERE m.project = $project AND m.memory_type = $type "
-            "RETURN m ORDER BY m.timestamp DESC LIMIT $limit",
-            {"project": project, "type": memory_type, "limit": limit},
+        """Get memories of a specific type for a project (projected columns)."""
+        match, params = self._facet_spec(
+            "m.memory_type = $type", project, limit,
+            extra_params={"type": memory_type},
         )
-        return [r[0] for r in rows]
+        return self._store._project(
+            match=match, alias="m", cols=_MEMORY_STORED_COLS,
+            params=params, order=_FACET_ORDER,
+        )

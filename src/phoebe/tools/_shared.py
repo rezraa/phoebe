@@ -109,6 +109,34 @@ def coerce_or_raise(
     )
 
 
+def _dedup_ids(ids: Any) -> list[str]:
+    """Normalise an id argument to a deduped, first-seen-order list of
+    non-empty strings.
+
+    Single source of truth for the batched-read tools (``get_stories``,
+    ``get_memories``). Tolerates the three shapes an MCP caller can send: a
+    native list, a bare id string, or a JSON-encoded list string. Non-string /
+    empty members are dropped; genuine ids that simply do not resolve are
+    surfaced in ``missing`` by the caller, never silently swallowed here.
+    """
+    raw = coerce_str_or_container(ids, list)
+    if isinstance(raw, str):
+        items: list = [raw]
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        items = []
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if not isinstance(item, str) or not item or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
 def coerce_str_or_container(val: Any, expected_type: type) -> Any:
     """Coerce a polymorphic ``Union[container, str, None]`` field.
 

@@ -25,6 +25,7 @@ from phoebe.tools.add_story import add_story as _add_story
 from phoebe.tools.update_story import update_story as _update_story
 from phoebe.tools.get_plan import get_plan as _get_plan
 from phoebe.tools.get_stories import get_stories as _get_stories
+from phoebe.tools.get_memories import get_memories as _get_memories
 from phoebe.tools._shared import coerce
 
 
@@ -153,10 +154,13 @@ def brief(
     Args:
         project: Project name.
         topic: Optional topic to focus on.
-        limit: Max results per category.
+        limit: Max results per facet.
 
-    Returns: {project, recent_decisions, open_questions, failed_approaches,
-              unvalidated_assumptions, topic_memories}
+    Returns a body-store + id-list brief: {project, memories: {id: <lean index
+    record>}, recent_decisions: [id], open_questions: [id],
+    unvalidated_assumptions: [id], failed_approaches: [id], topic_memories:
+    [id], active_plans: [...], counts: {facet: n}}. Drill into full memory
+    content with get_memories(memory_ids=[...]).
     """
     return _brief(project=project, topic=topic, limit=limit)
 
@@ -405,6 +409,28 @@ def get_stories(
         include_full_output=include_full_output,
         conn=conn,
     )
+
+
+@mcp.tool()
+def get_memories(
+    memory_ids: Union[list[str], str],
+    conn: Any = None,
+) -> dict:
+    """Fetch full detail (content decoded WHOLE) for specific memories by id —
+    the drill-down companion to the lean brief index.
+
+    brief/context_brief return lean index records with NO memory content.
+    Collect the ids you need and pass them here to read their full content.
+
+    Args:
+        memory_ids: Memory ids (a list, a bare id string, or a JSON list
+                    string). Deduped; max 50 per call.
+        conn: Kuzu connection (injected by Othrys).
+
+    Returns: {memories: [{id, title, memory_type, status, outcome, agent,
+              project, confidence, timestamp, content}], missing: [...]}
+    """
+    return _get_memories(memory_ids=memory_ids, conn=conn)
 
 
 # ---------------------------------------------------------------------------
