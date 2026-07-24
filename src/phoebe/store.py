@@ -11,21 +11,32 @@ from typing import Any
 from phoebe._codec import decode_memory_content, derive_title
 
 # Lean column projections — single source of truth for the two-tier plan read.
-# get_plan reads the SKELETON sets (no heavy transcript fields); the batched
-# get_stories drill-down projects the heavy fields explicitly. Keeping the
-# column lists here means the RETURN clause and the dict keys can never drift.
+# get_plan reads the SKELETON sets; the batched get_stories drill-down projects
+# the heavy fields explicitly. Keeping the column lists here means the RETURN
+# clause and the dict keys can never drift.
+#
+# The STORY split is ASYMMETRIC to the EPIC split, BY DESIGN:
+#   * Stories: the skeleton is NAME-ONLY navigation (id/name/phase/titan/
+#     sequence/status). ``description`` + ``acceptance_criteria`` moved OUT of
+#     the skeleton and INTO the drill-down — at ~350 stories they were 91% of
+#     the get_plan payload and blew the tool-return ceiling. Read a story's
+#     description/AC via get_stories, alongside its input_context/output.
+#   * Epics: KEEP ``description`` + ``acceptance_criteria`` in the skeleton —
+#     coarse wayfinding, ~24 items, no epic drill-down tool. Cheap to carry.
 _EPIC_SKELETON_COLS = (
     "id", "name", "description", "sequence", "status", "acceptance_criteria",
 )
 _STORY_SKELETON_COLS = (
-    "id", "name", "description", "phase", "assigned_titan", "sequence",
-    "status", "acceptance_criteria",
+    "id", "name", "phase", "assigned_titan", "sequence", "status",
 )
-# Drill-down (get_stories) heavy shape. ``full_output`` is appended only when
-# the caller opts in, so the transcript is never materialised otherwise.
+# Drill-down (get_stories) heavy shape. Carries the per-story ``description`` +
+# ``acceptance_criteria`` (the fields the skeleton no longer navigates) plus the
+# transcript fields ``input_context`` + ``output``. ``full_output`` is appended
+# only when the caller opts in, so the transcript is never materialised
+# otherwise.
 _STORY_DRILLDOWN_COLS = (
     "id", "name", "status", "phase", "assigned_titan", "sequence",
-    "input_context", "output",
+    "description", "acceptance_criteria", "input_context", "output",
 )
 # Plan-header skeleton (get_plan / get_latest_plan / _find_plan_by_name and the
 # brief's active_plans). Same lean discipline as the epic/story skeletons: every

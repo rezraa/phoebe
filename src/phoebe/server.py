@@ -364,22 +364,28 @@ def update_story(
 @mcp.tool()
 def get_plan(
     plan_id: str | None = None,
+    epic_id: str | None = None,
     conn: Any = None,
 ) -> dict:
     """Read the LEAN execution-plan tree — plan, epics, stories.
 
-    If plan_id is None, returns the most recently created plan. Stories carry
-    ids, names, statuses, descriptions and acceptance criteria — NOT their
-    input_context/output/full_output. To read a story's work product, drill
-    down with get_stories(story_ids=[...]).
+    If plan_id is None, returns the most recently created plan. Stories are
+    NAME-ONLY here — ids, names, statuses, phases, sequences, assigned titans;
+    NOT their description/acceptance_criteria/input_context/output/full_output
+    (epics still carry description + acceptance_criteria). To read a story's
+    description, acceptance_criteria, and work product, drill down with
+    get_stories(story_ids=[...]).
 
     Args:
         plan_id: ID of the plan. None = latest plan.
+        epic_id: Optional escape hatch for big plans — scope the returned
+            ``epics`` to that one epic's subtree. ``summary`` still reports
+            GLOBAL plan totals, never just the scoped epic.
         conn: Kuzu connection (injected by Othrys).
 
     Returns: {plan, epics: [{..., stories: [...]}], summary}
     """
-    return _get_plan(plan_id=plan_id, conn=conn)
+    return _get_plan(plan_id=plan_id, epic_id=epic_id, conn=conn)
 
 
 @mcp.tool()
@@ -388,11 +394,13 @@ def get_stories(
     include_full_output: bool = False,
     conn: Any = None,
 ) -> dict:
-    """Fetch heavy fields (input_context, output, opt-in full_output) for
-    specific stories by id — the drill-down companion to the lean get_plan.
+    """Fetch full detail (description, acceptance_criteria, input_context,
+    output, opt-in full_output) for specific stories by id — the drill-down
+    companion to the name-only get_plan.
 
-    get_plan returns a lean tree with NO story transcripts. Collect the ids
-    you need and pass them here to read their work product.
+    get_plan returns a name-only tree — no per-story description,
+    acceptance_criteria, or transcripts. Collect the ids you need and pass them
+    here to read their full detail and work product.
 
     Args:
         story_ids: Story ids (a list, a bare id string, or a JSON list
@@ -401,7 +409,8 @@ def get_stories(
         conn: Kuzu connection (injected by Othrys).
 
     Returns: {stories: [{id, name, status, phase, assigned_titan, sequence,
-              input_context, output, [full_output]}], missing: [...]}
+              description, acceptance_criteria, input_context, output,
+              [full_output]}], missing: [...]}
     """
     return _get_stories(
         story_ids=story_ids,

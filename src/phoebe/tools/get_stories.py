@@ -1,12 +1,13 @@
 # Copyright (c) 2026 Reza Malik. Licensed under the Apache License, Version 2.0.
-"""Batched drill-down read for specific stories — the heavy-field companion
-to the lean ``get_plan`` tree.
+"""Batched drill-down read for specific stories — the detail companion to the
+name-only ``get_plan`` tree.
 
-``get_plan`` returns a lean tree (ids, names, statuses, descriptions,
-acceptance criteria — NO transcripts). To read a completed story's actual
-work product, collect its id and call ``get_stories``: ``input_context`` and
-``output`` come back whole, and ``full_output`` (the raw Titan transcript)
-only when ``include_full_output`` is set.
+``get_plan`` returns a lean tree — story ids/names/statuses only, NO per-story
+``description`` / ``acceptance_criteria`` / transcripts. To read a story's full
+detail, collect its id and call ``get_stories``: ``description``,
+``acceptance_criteria``, ``input_context`` and ``output`` come back whole, and
+``full_output`` (the raw Titan transcript) only when ``include_full_output`` is
+set.
 """
 
 from __future__ import annotations
@@ -26,10 +27,11 @@ def get_stories(
     project: str | None = None,
     conn: Any = None,
 ) -> dict:
-    """Fetch heavy fields for specific stories by id (the ``get_plan`` drill-down).
+    """Fetch full detail for specific stories by id (the ``get_plan`` drill-down).
 
-    ``get_plan`` returns a lean tree with NO story transcripts. Pass the ids
-    you need here to read their work product.
+    ``get_plan`` returns a name-only tree — no per-story description,
+    acceptance_criteria, or transcripts. Pass the ids you need here to read
+    their full detail and work product.
 
     Args:
         story_ids: Story ids to fetch. Accepts a list, a bare id string, or a
@@ -48,12 +50,16 @@ def get_stories(
         {
           "stories": [
             {id, name, status, phase, assigned_titan, sequence,
-             input_context, output, [full_output]}
+             description, acceptance_criteria, input_context, output,
+             [full_output]}
           ],
           "missing": [requested ids that did not resolve (or were denied by
                       project scope)]
         }
-        ``input_context`` and ``output`` are returned WHOLE (never truncated).
+        ``description``, ``acceptance_criteria``, ``input_context`` and
+        ``output`` are returned WHOLE (never truncated). A cross-project id
+        falls to ``missing`` on the same scoped row — its description/AC are
+        denied together with its output, never leaked.
         On an oversize list:
         {"error", "error_type": "too_many_ids", "limit": 50, "requested": N}.
     """

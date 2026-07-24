@@ -33,9 +33,10 @@ def _find_plan_by_name(store: Any, name: str) -> dict | None:
 def get_plan(
     plan_id: str | None = None,
     name: str | None = None,
+    epic_id: str | None = None,
     conn: Any = None,
 ) -> dict:
-    """Read a full execution plan with all epics and stories.
+    """Read an execution plan's epics and stories (name-only story navigation).
 
     Lookup order:
     1. If plan_id is given, fetch by exact ID.
@@ -46,9 +47,13 @@ def get_plan(
         plan_id: ID of the plan to read (e.g. "plan-8f45bad9").
         name: Search by plan name (case-insensitive substring match,
               e.g. "File Viewer" matches "File Viewer" plan).
+        epic_id: Optional escape hatch for big plans. When given, the returned
+              ``epics`` list holds ONLY that one epic's subtree (its lean
+              stories) — but ``summary`` STILL counts every story in the whole
+              plan, never just the scoped epic. Omit for the full tree.
         conn: Kuzu connection (Othrys mode) or None (standalone).
 
-    Returns (LEAN tree — no story transcripts):
+    Returns (LEAN tree — no per-story description / AC / transcripts):
         {
             plan: {id, name, goal, status, created_at, ...},
             epics: [
@@ -56,8 +61,7 @@ def get_plan(
                     id, name, description, sequence, status,
                     acceptance_criteria,
                     stories: [
-                        {id, name, description, phase, assigned_titan,
-                         sequence, status, acceptance_criteria}
+                        {id, name, phase, assigned_titan, sequence, status}
                     ]
                 }
             ],
@@ -67,8 +71,11 @@ def get_plan(
             }
         }
 
-    Story ``input_context`` / ``output`` / ``full_output`` are NOT here —
-    drill down for them via the ``get_stories`` tool with the ids you need.
+    EPICS keep their ``description`` + ``acceptance_criteria`` (coarse
+    wayfinding). STORIES are name-only here — a story's ``description``,
+    ``acceptance_criteria``, ``input_context``, ``output`` (and
+    ``full_output``) are NOT in this tree. Drill down for them via the
+    ``get_stories`` tool with the ids you need.
     """
     store = get_store(conn)
 
@@ -97,6 +104,10 @@ def get_plan(
         "failed": 0,
     }
 
+    # Iterate EVERY epic so ``summary`` is a GLOBAL plan roll-up. When
+    # ``epic_id`` scopes the read, only the matching epic's subtree is emitted
+    # into ``epics``, but the counts above still cover the whole plan — a scoped
+    # summary that under-reports totals is the lie the brief D6 gate outlawed.
     for epic in epics_raw:
         stories = store.get_stories_for_epic(epic["id"])
         for s in stories:
@@ -105,10 +116,11 @@ def get_plan(
             if st in summary:
                 summary[st] += 1
 
-        epics_out.append({
-            **epic,
-            "stories": stories,
-        })
+        if epic_id is None or epic["id"] == epic_id:
+            epics_out.append({
+                **epic,
+                "stories": stories,
+            })
 
     return {
         "plan": plan,
